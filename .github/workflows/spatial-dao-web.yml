@@ -1,0 +1,100 @@
+name: React Web App
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+    branches: ["main"]
+
+# Environment variables available to all jobs and steps in this workflow
+env:
+  APP_DIR: app
+  ARTIFACT_NAME: app_${{ github.ref_name }}_${{ github.run_number }}
+  APP_ARTIFACT_DIR: build
+  DEPLOY_SCRIPT_DIR: deploy
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build React Web App
+
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.action != 'closed')
+
+    defaults:
+      run:
+        working-directory: ${{ env.APP_DIR }}
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Use Node.js 18.x
+        uses: actions/setup-node@v2
+        with:
+          node-version: 18.x
+
+      - name: NPM Cache
+        uses: actions/cache@v2
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Publish artifact
+        uses: actions/upload-artifact@v2
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: ${{ env.APP_DIR }}/${{ env.APP_ARTIFACT_DIR }}
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: ${{ env.APP_DIR }}/${{ env.DEPLOY_SCRIPT_DIR }}
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Download artifact
+        uses: actions/download-artifact@v2
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: ${{ env.APP_DIR }}/${{ env.DEPLOY_SCRIPT_DIR }}/playbooks/files
+
+      - name: Zip artifact
+        run: |
+          cd playbooks/files
+          zip -r ${{ env.ARTIFACT_NAME }}.zip .
+
+      - name: Prepare for playbook execution
+        run: |
+          mkdir vault
+          mkdir ~/.ssh
+          touch ~/.ssh/ansible
+          touch ~/.ssh/ansible.pub
+          chmod 600 ~/.ssh/ansible
+          chmod 600 ~/.ssh/ansible.pub
+          echo "${{ secrets.VAULT_PASSWORD }}" > vault/spatial-dao
+          echo "${{ secrets.ANSIBLE_KEY }}" > ~/.ssh/ansible
+          echo "${{ secrets.ANSIBLE_PUB }}" > ~/.ssh/ansible.pub
+
+      - name: Bootstrap playbook
+        run: ansible-playbook playbooks/spatial-dao-deploy.yml --tags bootstrap
+
+      - name: Deployment playbook
+        run: ansible-playbook playbooks/spatial-dao-deploy.yml --extra-vars "artifact_name=${{ env.ARTIFACT_NAME }}"
