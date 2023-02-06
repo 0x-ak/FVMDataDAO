@@ -13,6 +13,7 @@ env:
   ARTIFACT_NAME: app_${{ github.ref_name }}_${{ github.run_number }}
   APP_ARTIFACT_DIR: build
   DEPLOY_SCRIPT_DIR: deploy
+  process.env.CI : false
 
 permissions:
   contents: read
